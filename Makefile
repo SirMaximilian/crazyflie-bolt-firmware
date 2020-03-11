@@ -1,6 +1,6 @@
 # CrazyFlie's Makefile
 # Copyright (c) 2011,2012 Bitcraze AB
-# This Makefile compiles all the objet file to ./bin/ and the resulting firmware
+# This Makefile compiles all the object file to ./bin/ and the resulting firmware
 # image in ./cfX.elf and ./cfX.bin
 
 CRAZYFLIE_BASE ?= ./
@@ -16,7 +16,7 @@ OPENOCD           ?= openocd
 OPENOCD_INTERFACE ?= interface/stlink-v2.cfg
 OPENOCD_CMDS      ?=
 CROSS_COMPILE     ?= arm-none-eabi-
-PYTHON2           ?= python2
+PYTHON            ?= python
 DFU_UTIL          ?= dfu-util
 CLOAD             ?= 1
 DEBUG             ?= 0
@@ -38,14 +38,17 @@ CFLAGS += -DCRAZYFLIE_FW
 ######### Stabilizer configuration ##########
 ## These are set by the platform (see tools/make/platforms/*.mk), can be overwritten here
 ESTIMATOR          ?= any
-CONTROLLER         ?= Any # one of Any, PID, Mellinger
+CONTROLLER         ?= Any # one of Any, PID, Mellinger, INDI
 POWER_DISTRIBUTION ?= stock
 
 #OpenOCD conf
 RTOS_DEBUG        ?= 0
 
 LIB = $(CRAZYFLIE_BASE)/src/lib
-FREERTOS = $(CRAZYFLIE_BASE)/src/lib/FreeRTOS
+FREERTOS = $(CRAZYFLIE_BASE)/vendor/FreeRTOS
+
+# Communication Link
+UART2_LINK        ?= 0
 
 
 ############### CPU-specific build configuration ################
@@ -96,7 +99,7 @@ VPATH += $(LIB)/vl53l1/core/src
 VPATH += $(PORT)
 PORT_OBJ = port.o
 VPATH +=  $(FREERTOS)/portable/MemMang
-MEMMANG_OBJ = heap_4.o
+MEMMANG_OBJ ?= heap_4.o
 
 VPATH += $(FREERTOS)
 FREERTOS_OBJ = list.o tasks.o queue.o timers.o $(MEMMANG_OBJ)
@@ -159,8 +162,8 @@ PROJ_OBJ += vl53l1_register_funcs.o vl53l1_wait.o vl53l1_core_support.o
 # Modules
 PROJ_OBJ += system.o comm.o console.o pid.o crtpservice.o param.o
 PROJ_OBJ += log.o worker.o trigger.o sitaw.o queuemonitor.o msp.o
-PROJ_OBJ += platformservice.o sound_cf2.o extrx.o sysload.o mem_cf2.o
-PROJ_OBJ += range.o app_handler.o
+PROJ_OBJ += platformservice.o sound_cf2.o extrx.o sysload.o mem.o
+PROJ_OBJ += range.o app_handler.o static_mem.o
 
 # Stabilizer modules
 PROJ_OBJ += commander.o crtp_commander.o crtp_commander_rpyt.o
@@ -168,12 +171,12 @@ PROJ_OBJ += crtp_commander_generic.o crtp_localization_service.o
 PROJ_OBJ += attitude_pid_controller.o sensfusion6.o stabilizer.o
 PROJ_OBJ += position_estimator_altitude.o position_controller_pid.o
 PROJ_OBJ += estimator.o estimator_complementary.o
-PROJ_OBJ += controller.o controller_pid.o controller_mellinger.o
+PROJ_OBJ += controller.o controller_pid.o controller_mellinger.o controller_indi.o
 PROJ_OBJ += power_distribution_$(POWER_DISTRIBUTION).o
 PROJ_OBJ += estimator_kalman.o kalman_core.o kalman_supervisor.o
 
 # High-Level Commander
-PROJ_OBJ += crtp_commander_high_level.o planner.o pptraj.o
+PROJ_OBJ += crtp_commander_high_level.o planner.o pptraj.o pptraj_compressed.o
 
 # Deck Core
 PROJ_OBJ += deck.o deck_info.o deck_drivers.o deck_test.o
@@ -196,13 +199,20 @@ PROJ_OBJ += locodeck.o
 PROJ_OBJ += clockCorrectionEngine.o
 PROJ_OBJ += lpsTwrTag.o
 PROJ_OBJ += lpsTdoa2Tag.o
-PROJ_OBJ += lpsTdoa3Tag.o tdoaEngine.o tdoaStats.o tdoaStorage.o
+PROJ_OBJ += lpsTdoa3Tag.o tdoaEngineInstance.o tdoaEngine.o tdoaStats.o tdoaStorage.o
 PROJ_OBJ += outlierFilter.o
 PROJ_OBJ += flowdeck_v1v2.o
 PROJ_OBJ += oa.o
 PROJ_OBJ += multiranger.o
 PROJ_OBJ += lighthouse.o
 PROJ_OBJ += activeMarkerDeck.o
+
+# Uart2 Link for CRTP communication is not compatible with decks using uart2
+ifeq ($(UART2_LINK), 1)
+CFLAGS += -DUART2_LINK_COMM
+else
+PROJ_OBJ += aideck.o
+endif
 
 ifeq ($(LPS_TDOA_ENABLE), 1)
 CFLAGS += -DLPS_TDOA_ENABLE
@@ -233,6 +243,7 @@ PROJ_OBJ += exptestRR.o
 PROJ_OBJ += exptestBolt.o
 #PROJ_OBJ += bigquadtest.o
 #PROJ_OBJ += uarttest.o
+#PROJ_OBJ += aidecktest.o
 
 
 # Utilities
@@ -362,7 +373,7 @@ bin/vendor:
 	mkdir -p bin/vendor
 
 libarm_math.a:
-	+$(MAKE) -C $(CRAZYFLIE_BASE)/tools/make/cmsis_dsp/ CRAZYFLIE_BASE=$(abspath $(CRAZYFLIE_BASE)) PROJ_ROOT=$(CURDIR) V=$(V)
+	+$(MAKE) -C $(CRAZYFLIE_BASE)/tools/make/cmsis_dsp/ CRAZYFLIE_BASE=$(abspath $(CRAZYFLIE_BASE)) PROJ_ROOT=$(CURDIR) V=$(V) CROSS_COMPILE=$(CROSS_COMPILE)
 
 clean_version:
 ifeq ($(SHELL),/bin/sh)
@@ -372,7 +383,7 @@ endif
 
 print_version:
 	@echo "Build for the $(PLATFORM_NAME_$(PLATFORM))!"
-	@$(PYTHON2) $(CRAZYFLIE_BASE)/tools/make/versionTemplate.py --crazyflie-base $(CRAZYFLIE_BASE) --print-version
+	@$(PYTHON) $(CRAZYFLIE_BASE)/tools/make/versionTemplate.py --crazyflie-base $(CRAZYFLIE_BASE) --print-version
 ifeq ($(CLOAD), 1)
 	@echo "Crazyloader build!"
 endif
@@ -429,7 +440,7 @@ prep:
 	@$(CC) $(CFLAGS) -dM -E - < /dev/null
 
 check_submodules:
-	@cd $(CRAZYFLIE_BASE); $(PYTHON2) tools/make/check-for-submodules.py
+	@cd $(CRAZYFLIE_BASE); $(PYTHON) tools/make/check-for-submodules.py
 
 include $(CRAZYFLIE_BASE)/tools/make/targets.mk
 
