@@ -34,15 +34,86 @@
 void logInit(void);
 bool logTest(void);
 
-/* Internal access of log variables */
-int logGetVarId(char* group, char* name);
-int logGetType(int varid);
-void logGetGroupAndName(int varid, char** group, char** name);
-void* logGetAddress(int varid);
+/* Public API to access of log variables */
+
+/** Variable identifier.
+ *
+ * Should be fetched with logGetVarId(). This is to be considered as an
+ * opaque type, internal structure might change.
+ *
+ * Use logVarIdIsValid() to check if the ID is valid.
+ */
+typedef uint16_t logVarId_t;
+
+/** Get the varId from group and name of variable
+ *
+ * @param group Group name of the variable
+ * @param name Name of the variable
+ * @return The variable ID or an invalid ID. Use logVarIdIsValid() to check validity.
+ */
+logVarId_t logGetVarId(const char* group, const char* name);
+
+/** Check variable ID validity
+ *
+ * @param varId variable ID, returned by logGetLogId()
+ * @return true if the variable ID is valid, false otherwise.
+ */
+static inline bool logVarIdIsValid(logVarId_t varId) {
+  return varId != 0xffffu;
+}
+
+/** Return the logging type
+ *
+ * @param varId variable ID, returned by logGetVarId()
+ * @return Type of the variable. The value correspond to the defines used when
+ *         declaring a param variable.
+ */
+int logGetType(logVarId_t varid);
+
+/** Get group and name strings of a parameter
+ *
+ * @param varId variable ID, returned by logGetVarId()
+ * @param group Pointer to a char* that will be filled with the group name
+ * @param group Pointer to a char* that will be filled with the variable name
+ *
+ * The string buffers must be able to hold at least 32 bytes.
+ */
+void logGetGroupAndName(logVarId_t varid, char** group, char** name);
+
+/** Get address of the logging variable
+ *
+ * @param varId variable ID, returned by logGetVarId()
+ * @return Address of the location of log variable
+ *  */
+void* logGetAddress(logVarId_t varid);
+
+/** Get log variable size in byte
+ *
+ * @param type Type returned by logGetType()
+ * @return Size in byte occupied by variable of this type
+ */
 uint8_t logVarSize(int type);
-float logGetFloat(int varid);
-int logGetInt(int varid);
-unsigned int logGetUint(int varid);
+
+/** Return float value of a logging variable
+ *
+ * @param varId variable ID, returned by logGetVarId()
+ * @return Current value of the variable
+ */
+float logGetFloat(logVarId_t varid);
+
+/** Return int value of a logging variable
+ *
+ * @param varId variable ID, returned by logGetVarId()
+ * @return Current value of the variable
+ */
+int logGetInt(logVarId_t varid);
+
+/** Return Unsigned int value of a logging variable
+ *
+ * @param varId variable ID, returned by paramGetVarId()
+ * @return Current value of the variable
+ */
+unsigned int logGetUint(logVarId_t varid);
 
 /* Basic log structure */
 struct log_s {
@@ -84,14 +155,21 @@ typedef struct {
 } logByFunction_t;
 
 /* Internal defines */
+#define LOG_CORE 0x20
 #define LOG_GROUP 0x80
 #define LOG_BY_FUNCTION 0x40
 #define LOG_START 1
 #define LOG_STOP  0
 
 /* Macros */
+
+#ifndef UNIT_TEST_MODE
+
 #define LOG_ADD(TYPE, NAME, ADDRESS) \
    { .type = TYPE, .name = #NAME, .address = (void*)(ADDRESS), },
+
+#define LOG_ADD_CORE(TYPE, NAME, ADDRESS) \
+  LOG_ADD(TYPE | LOG_CORE, NAME, ADDRESS)
 
 #define LOG_ADD_BY_FUNCTION(TYPE, NAME, ADDRESS) \
    { .type = TYPE | LOG_BY_FUNCTION, .name = #NAME, .address = (void*)(ADDRESS), },
@@ -100,21 +178,34 @@ typedef struct {
    { \
   .type = TYPE, .name = #NAME, .address = (void*)(ADDRESS), },
 
-// Fix to make unit tests run on MacOS
-#ifdef __APPLE__
-#define LOG_GROUP_START(NAME)  \
-  static const struct log_s __logs_##NAME[] __attribute__((section("__DATA,__.log." #NAME), used)) = { \
-  LOG_ADD_GROUP(LOG_GROUP | LOG_START, NAME, 0x0)
-#else
 #define LOG_GROUP_START(NAME)  \
   static const struct log_s __logs_##NAME[] __attribute__((section(".log." #NAME), used)) = { \
   LOG_ADD_GROUP(LOG_GROUP | LOG_START, NAME, 0x0)
-#endif
 
 //#define LOG_GROUP_START_SYNC(NAME, LOCK) LOG_ADD_GROUP(LOG_GROUP | LOG_START, NAME, LOCK);
 
 #define LOG_GROUP_STOP(NAME) \
   LOG_ADD_GROUP(LOG_GROUP | LOG_STOP, stop_##NAME, 0x0) \
   };
+
+#else // UNIT_TEST_MODE
+
+// Empty defines when running unit tests
+#define LOG_ADD(TYPE, NAME, ADDRESS)
+#define LOG_ADD_CORE(TYPE, NAME, ADDRESS)
+#define LOG_ADD_BY_FUNCTION(TYPE, NAME, ADDRESS)
+#define LOG_ADD_GROUP(TYPE, NAME, ADDRESS)
+#define LOG_GROUP_START(NAME)
+#define LOG_GROUP_STOP(NAME)
+
+#endif // UNIT_TEST_MODE
+
+// Do not remove! This definition is used by doxygen to generate log documentation.
+/** @brief Core log variables
+ *
+ * The core log variables are considered part of the official API and are guaranteed
+ * to be stable over time.
+ *
+ * @defgroup LOG_CORE_GROUP */
 
 #endif /* __LOG_H__ */

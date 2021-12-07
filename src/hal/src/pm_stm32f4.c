@@ -41,6 +41,7 @@
 #include "sound.h"
 #include "deck.h"
 #include "static_mem.h"
+#include "worker.h"
 
 typedef struct _PmSyslinkInfo
 {
@@ -56,20 +57,30 @@ typedef struct _PmSyslinkInfo
   };
   float vBat;
   float chargeCurrent;
+#ifdef PM_SYSTLINK_INLCUDE_TEMP
+  float temp;
+#endif
 }  __attribute__((packed)) PmSyslinkInfo;
 
-static float    batteryVoltage;
-static uint16_t batteryVoltageMV;
-static float    batteryVoltageMin = 6.0;
-static float    batteryVoltageMax = 0.0;
+static float     batteryVoltage;
+static uint16_t  batteryVoltageMV;
+static float     batteryVoltageMin = 6.0;
+static float     batteryVoltageMax = 0.0;
 
-static float    extBatteryVoltage;
-static uint16_t extBatteryVoltageMV;
-static uint8_t  extBatVoltDeckPin;
-static float    extBatVoltMultiplier;
-static float    extBatteryCurrent;
-static uint8_t  extBatCurrDeckPin;
-static float    extBatCurrAmpPerVolt;
+static float     extBatteryVoltage;
+static uint16_t  extBatteryVoltageMV;
+static deckPin_t extBatVoltDeckPin;
+static bool      isExtBatVoltDeckPinSet = false;
+static float     extBatVoltMultiplier;
+static float     extBatteryCurrent;
+static deckPin_t extBatCurrDeckPin;
+static bool      isExtBatCurrDeckPinSet = false;
+static float     extBatCurrAmpPerVolt;
+
+#ifdef PM_SYSTLINK_INLCUDE_TEMP
+// nRF51 internal temp
+static float    temp;
+#endif
 
 static uint32_t batteryLowTimeStamp;
 static uint32_t batteryCriticalLowTimeStamp;
@@ -139,7 +150,7 @@ static void pmSetBatteryVoltage(float voltage)
 static void pmSystemShutdown(void)
 {
 #ifdef ACTIVATE_AUTO_SHUTDOWN
-//TODO: Implement syslink call to shutdown
+  systemRequestShutdown();
 #endif
 }
 
@@ -183,11 +194,63 @@ float pmGetBatteryVoltageMax(void)
   return batteryVoltageMax;
 }
 
+/*
+ * When a module wants to register a callback to be called on shutdown they
+ * call pmRegisterGracefulShutdownCallback(graceful_shutdown_callback_t),
+ * with a function they which to be run at shutdown. We currently support
+ * GRACEFUL_SHUTDOWN_MAX_CALLBACKS number of callbacks to be registred.
+ */
+#define GRACEFUL_SHUTDOWN_MAX_CALLBACKS 5
+static int graceful_shutdown_callbacks_index;
+static graceful_shutdown_callback_t graceful_shutdown_callbacks[GRACEFUL_SHUTDOWN_MAX_CALLBACKS];
+
+/*
+ * Please take care in your callback, do not take to long time the nrf
+ * will not wait for you, it will shutdown.
+ */
+bool pmRegisterGracefulShutdownCallback(graceful_shutdown_callback_t cb)
+{
+  // To many registered allready! Increase limit if you think you are important
+  // enough!
+  if (graceful_shutdown_callbacks_index >= GRACEFUL_SHUTDOWN_MAX_CALLBACKS) {
+    return false;
+  }
+
+  graceful_shutdown_callbacks[graceful_shutdown_callbacks_index] = cb;
+  graceful_shutdown_callbacks_index += 1;
+
+  return true;
+}
+
+/*
+ * Iterate through all registered shutdown callbacks and call them one after
+ * the other, when all is done, send the ACK back to nrf to allow power off.
+ */
+static void pmGracefulShutdown()
+{
+  for (int i = 0; i < graceful_shutdown_callbacks_index; i++) {
+    graceful_shutdown_callback_t callback = graceful_shutdown_callbacks[i];
+
+    callback();
+  }
+
+  SyslinkPacket slp = {
+    .type = SYSLINK_PM_SHUTDOWN_ACK,
+  };
+
+  syslinkSendPacket(&slp);
+}
+
 void pmSyslinkUpdate(SyslinkPacket *slp)
 {
   if (slp->type == SYSLINK_PM_BATTERY_STATE) {
     memcpy(&pmSyslinkInfo, &slp->data[0], sizeof(pmSyslinkInfo));
     pmSetBatteryVoltage(pmSyslinkInfo.vBat);
+#ifdef PM_SYSTLINK_INLCUDE_TEMP
+    temp = pmSyslinkInfo.temp;
+#endif
+  } else if (slp->type == SYSLINK_PM_SHUTDOWN_REQUEST) {
+    workerSchedule(pmGracefulShutdown, NULL);
   }
 }
 
@@ -225,9 +288,10 @@ PMStates pmUpdateState()
   return state;
 }
 
-void pmEnableExtBatteryCurrMeasuring(uint8_t pin, float ampPerVolt)
+void pmEnableExtBatteryCurrMeasuring(const deckPin_t pin, float ampPerVolt)
 {
   extBatCurrDeckPin = pin;
+  isExtBatCurrDeckPinSet = true;
   extBatCurrAmpPerVolt = ampPerVolt;
 }
 
@@ -235,7 +299,7 @@ float pmMeasureExtBatteryCurrent(void)
 {
   float current;
 
-  if (extBatCurrDeckPin)
+  if (isExtBatCurrDeckPinSet)
   {
     current = analogReadVoltage(extBatCurrDeckPin) * extBatCurrAmpPerVolt;
   }
@@ -247,9 +311,10 @@ float pmMeasureExtBatteryCurrent(void)
   return current;
 }
 
-void pmEnableExtBatteryVoltMeasuring(uint8_t pin, float multiplier)
+void pmEnableExtBatteryVoltMeasuring(const deckPin_t pin, float multiplier)
 {
   extBatVoltDeckPin = pin;
+  isExtBatVoltDeckPinSet = true;
   extBatVoltMultiplier = multiplier;
 }
 
@@ -257,7 +322,7 @@ float pmMeasureExtBatteryVoltage(void)
 {
   float voltage;
 
-  if (extBatVoltDeckPin)
+  if (isExtBatVoltDeckPinSet)
   {
     voltage = analogReadVoltage(extBatVoltDeckPin) * extBatVoltMultiplier;
   }
@@ -269,12 +334,21 @@ float pmMeasureExtBatteryVoltage(void)
   return voltage;
 }
 
+bool pmIsBatteryLow(void) {
+  return (pmState == lowPower);
+}
+
+bool pmIsChargerConnected(void) {
+  return (pmState == charging) || (pmState == charged);
+}
+
+bool pmIsCharging(void) {
+  return (pmState == charging);
+}
 
 // return true if battery discharging
 bool pmIsDischarging(void) {
-    PMStates pmState;
-    pmState = pmUpdateState();
-    return (pmState == lowPower )|| (pmState == battery);
+  return (pmState == lowPower) || (pmState == battery);
 }
 
 void pmTask(void *param)
@@ -318,31 +392,26 @@ void pmTask(void *param)
       switch (pmState)
       {
         case charged:
-          ledseqStop(CHG_LED, seq_charging);
-          ledseqRun(CHG_LED, seq_charged);
+          ledseqStop(&seq_charging);
+          ledseqRunBlocking(&seq_charged);
           soundSetEffect(SND_BAT_FULL);
-          systemSetCanFly(false);
           break;
         case charging:
-          ledseqStop(LOWBAT_LED, seq_lowbat);
-          ledseqStop(CHG_LED, seq_charged);
-          ledseqRun(CHG_LED, seq_charging);
+          ledseqStop(&seq_lowbat);
+          ledseqStop(&seq_charged);
+          ledseqRunBlocking(&seq_charging);
           soundSetEffect(SND_USB_CONN);
-          systemSetCanFly(false);
           break;
         case lowPower:
-          ledseqRun(LOWBAT_LED, seq_lowbat);
+          ledseqRunBlocking(&seq_lowbat);
           soundSetEffect(SND_BAT_LOW);
-          systemSetCanFly(true);
           break;
         case battery:
-          ledseqStop(CHG_LED, seq_charging);
-          ledseqRun(CHG_LED, seq_charged);
+          ledseqRunBlocking(&seq_charging);
+          ledseqRun(&seq_charged);
           soundSetEffect(SND_USB_DISC);
-          systemSetCanFly(true);
           break;
         default:
-          systemSetCanFly(true);
           break;
       }
       pmStateOld = pmState;
@@ -354,11 +423,9 @@ void pmTask(void *param)
         break;
       case charging:
         {
-          uint32_t onTime;
-
-          onTime = pmBatteryChargeFromVoltage(pmGetBatteryVoltage()) *
-                   (LEDSEQ_CHARGE_CYCLE_TIME_500MA / 10);
-          ledseqSetTimes(seq_charging, onTime, LEDSEQ_CHARGE_CYCLE_TIME_500MA - onTime);
+          // Charge level between 0.0 and 1.0
+          float chargeLevel = pmBatteryChargeFromVoltage(pmGetBatteryVoltage()) / 10.0f;
+          ledseqSetChargeLevel(chargeLevel);
         }
         break;
       case lowPower:
@@ -386,13 +453,54 @@ void pmTask(void *param)
   }
 }
 
+/**
+ * Power management log variables.
+ */
 LOG_GROUP_START(pm)
-LOG_ADD(LOG_FLOAT, vbat, &batteryVoltage)
+/**
+ * @brief Battery voltage [V]
+ */
+LOG_ADD_CORE(LOG_FLOAT, vbat, &batteryVoltage)
+/**
+ * @brief Battery voltage [mV]
+ */
 LOG_ADD(LOG_UINT16, vbatMV, &batteryVoltageMV)
+/**
+ * @brief BigQuad external voltage measurement [V]
+ */
 LOG_ADD(LOG_FLOAT, extVbat, &extBatteryVoltage)
+/**
+ * @brief BigQuad external voltage measurement [mV]
+ */
 LOG_ADD(LOG_UINT16, extVbatMV, &extBatteryVoltageMV)
+/**
+ * @brief BigQuad external current measurement [V]
+ */
 LOG_ADD(LOG_FLOAT, extCurr, &extBatteryCurrent)
+/**
+ * @brief Battery charge current [A]
+ */
 LOG_ADD(LOG_FLOAT, chargeCurrent, &pmSyslinkInfo.chargeCurrent)
-LOG_ADD(LOG_INT8, state, &pmState)
-LOG_ADD(LOG_UINT8, batteryLevel, &batteryLevel)
+/**
+ * @brief State of power management
+ *
+ * | State | Meaning   | \n
+ * | -     | -         | \n
+ * | 0     | Battery   | \n
+ * | 1     | Charging  | \n
+ * | 2     | Charged   | \n
+ * | 3     | Low power | \n
+ * | 4     | Shutdown  | \n
+ */
+LOG_ADD_CORE(LOG_INT8, state, &pmState)
+/**
+ * @brief Battery charge level [%]
+ */
+LOG_ADD_CORE(LOG_UINT8, batteryLevel, &batteryLevel)
+#ifdef PM_SYSTLINK_INCLUDE_TEMP
+/**
+ * @brief Temperature from nrf51 [degrees]
+ */
+LOG_ADD(LOG_FLOAT, temp, &temp)
+#endif
 LOG_GROUP_STOP(pm)

@@ -7,7 +7,7 @@
  *
  * Crazyflie control firmware
  *
- * Copyright (C) 2011-2018 Bitcraze AB
+ * Copyright (C) 2011-2021 Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -50,6 +50,7 @@
 #include "sound.h"
 #include "filter.h"
 #include "static_mem.h"
+#include "estimator.h"
 
 /**
  * Enable 250Hz digital LPF mode. However does not work with
@@ -124,7 +125,7 @@ static volatile uint64_t imuIntTimestamp;
 
 static Axis3i16 gyroRaw;
 static Axis3i16 accelRaw;
-static BiasObj gyroBiasRunning;
+NO_DMA_CCM_SAFE_ZERO_INIT static BiasObj gyroBiasRunning;
 static Axis3f  gyroBias;
 #if defined(SENSORS_GYRO_BIAS_CALCULATE_STDDEV) && defined (GYRO_BIAS_LIGHT_WEIGHT)
 static Axis3f  gyroBiasStdDev;
@@ -147,11 +148,21 @@ static bool isMpu6500TestPassed = false;
 static bool isAK8963TestPassed = false;
 static bool isLPS25HTestPassed = false;
 
+// Precalculated values for IMU alignment
+static float sphi   = sinf(IMU_PHI * (float) M_PI / 180);
+static float cphi   = cosf(IMU_PHI * (float) M_PI / 180);
+static float stheta = sinf(IMU_THETA * (float) M_PI / 180);
+static float ctheta = cosf(IMU_THETA * (float) M_PI / 180);
+static float spsi   = sinf(IMU_PSI * (float) M_PI / 180);
+static float cpsi   = cosf(IMU_PSI * (float) M_PI / 180);
+
+static float R[3][3];
+
 // Pre-calculated values for accelerometer alignment
-float cosPitch;
-float sinPitch;
-float cosRoll;
-float sinRoll;
+static float cosPitch;
+static float sinPitch;
+static float cosRoll;
+static float sinRoll;
 
 // This buffer needs to hold data from all sensors
 static uint8_t buffer[SENSORS_MPU6500_BUFF_LEN + SENSORS_MAG_BUFF_LEN + SENSORS_BARO_BUFF_LEN] = {0};
@@ -172,6 +183,7 @@ static void sensorsCalculateVarianceAndMean(BiasObj* bias, Axis3f* varOut, Axis3
 static void sensorsCalculateBiasMean(BiasObj* bias, Axis3i32* meanOut);
 static void sensorsAddBiasValue(BiasObj* bias, int16_t x, int16_t y, int16_t z);
 static bool sensorsFindBiasValue(BiasObj* bias);
+static void sensorsAlignToAirframe(Axis3f* in, Axis3f* out);
 static void sensorsAccAlignToGravity(Axis3f* in, Axis3f* out);
 
 STATIC_MEM_TASK_ALLOC(sensorsTask, SENSORS_TASK_STACKSIZE);
@@ -211,6 +223,8 @@ bool sensorsMpu9250Lps25hAreCalibrated() {
 
 static void sensorsTask(void *param)
 {
+  measurement_t measurement;
+
   systemWaitStart();
 
   sensorsSetupSlaveRead();
@@ -238,7 +252,14 @@ static void sensorsTask(void *param)
                   SENSORS_MPU6500_BUFF_LEN + SENSORS_MAG_BUFF_LEN : SENSORS_MPU6500_BUFF_LEN]));
       }
 
+      measurement.type = MeasurementTypeAcceleration;
+      measurement.data.acceleration.acc = sensorData.acc;
+      estimatorEnqueue(&measurement);
       xQueueOverwrite(accelerometerDataQueue, &sensorData.acc);
+
+      measurement.type = MeasurementTypeGyroscope;
+      measurement.data.gyroscope.gyro = sensorData.gyro;
+      estimatorEnqueue(&measurement);
       xQueueOverwrite(gyroDataQueue, &sensorData.gyro);
       if (isMagnetometerPresent)
       {
@@ -246,6 +267,9 @@ static void sensorsTask(void *param)
       }
       if (isBarometerPresent)
       {
+        measurement.type = MeasurementTypeBarometer;
+        measurement.data.barometer.baro = sensorData.baro;
+        estimatorEnqueue(&measurement);
         xQueueOverwrite(barometerDataQueue, &sensorData.baro);
       }
 
@@ -294,6 +318,8 @@ void processMagnetometerMeasurements(const uint8_t *buffer)
 
 void processAccGyroMeasurements(const uint8_t *buffer)
 {
+  Axis3f gyroScaledIMU;
+  Axis3f accScaledIMU;
   Axis3f accScaled;
   // Note the ordering to correct the rotated 90º IMU coordinate system
   accelRaw.y = (((int16_t) buffer[0]) << 8) | buffer[1];
@@ -314,14 +340,16 @@ void processAccGyroMeasurements(const uint8_t *buffer)
      processAccScale(accelRaw.x, accelRaw.y, accelRaw.z);
   }
 
-  sensorData.gyro.x = -(gyroRaw.x - gyroBias.x) * SENSORS_DEG_PER_LSB_CFG;
-  sensorData.gyro.y =  (gyroRaw.y - gyroBias.y) * SENSORS_DEG_PER_LSB_CFG;
-  sensorData.gyro.z =  (gyroRaw.z - gyroBias.z) * SENSORS_DEG_PER_LSB_CFG;
+  gyroScaledIMU.x = -(gyroRaw.x - gyroBias.x) * SENSORS_DEG_PER_LSB_CFG;
+  gyroScaledIMU.y =  (gyroRaw.y - gyroBias.y) * SENSORS_DEG_PER_LSB_CFG;
+  gyroScaledIMU.z =  (gyroRaw.z - gyroBias.z) * SENSORS_DEG_PER_LSB_CFG;
+  sensorsAlignToAirframe(&gyroScaledIMU, &sensorData.gyro);
   applyAxis3fLpf((lpf2pData*)(&gyroLpf), &sensorData.gyro);
 
-  accScaled.x = -(accelRaw.x) * SENSORS_G_PER_LSB_CFG / accScale;
-  accScaled.y =  (accelRaw.y) * SENSORS_G_PER_LSB_CFG / accScale;
-  accScaled.z =  (accelRaw.z) * SENSORS_G_PER_LSB_CFG / accScale;
+  accScaledIMU.x = -(accelRaw.x) * SENSORS_G_PER_LSB_CFG / accScale;
+  accScaledIMU.y =  (accelRaw.y) * SENSORS_G_PER_LSB_CFG / accScale;
+  accScaledIMU.z =  (accelRaw.z) * SENSORS_G_PER_LSB_CFG / accScale;
+  sensorsAlignToAirframe(&accScaledIMU, &accScaled);
   sensorsAccAlignToGravity(&accScaled, &sensorData.acc);
   applyAxis3fLpf((lpf2pData*)(&accLpf), &sensorData.acc);
 }
@@ -334,7 +362,6 @@ static void sensorsDeviceInit(void)
   // Wait for sensors to startup
   while (xTaskGetTickCount() < 1000);
 
-  i2cdevInit(I2C3_DEV);
   mpu6500Init(I2C3_DEV);
   if (mpu6500TestConnection() == true)
   {
@@ -673,7 +700,7 @@ static bool processGyroBias(int16_t gx, int16_t gy, int16_t gz, Axis3f *gyroBias
     if (gyroBiasRunning.isBiasValueFound)
     {
       soundSetEffect(SND_CALIB);
-      ledseqRun(SYS_LED, seq_calibrated);
+      ledseqRun(&seq_calibrated);
     }
   }
 
@@ -858,6 +885,26 @@ void __attribute__((used)) EXTI13_Callback(void)
 }
 
 /**
+ * Align the sensors to the Airframe axes
+ */
+static void sensorsAlignToAirframe(Axis3f* in, Axis3f* out)
+{
+  R[0][0] = ctheta * cpsi;
+  R[0][1] = ctheta * spsi;
+  R[0][2] = -stheta;
+  R[1][0] = sphi * stheta * cpsi - cphi * spsi;
+  R[1][1] = sphi * stheta * spsi + cphi * cpsi;
+  R[1][2] = sphi * ctheta;
+  R[2][0] = cphi * stheta * cpsi + sphi * spsi;
+  R[2][1] = cphi * stheta * spsi - sphi * cpsi;
+  R[2][2] = cphi * ctheta;
+
+  out->x = in->x*R[0][0] + in->y*R[0][1] + in->z*R[0][2];
+  out->y = in->x*R[1][0] + in->y*R[1][1] + in->z*R[1][2];
+  out->z = in->x*R[2][0] + in->y*R[2][1] + in->z*R[2][2];
+}
+
+/**
  * Compensate for a miss-aligned accelerometer. It uses the trim
  * data gathered from the UI and written in the config-block to
  * rotate the accelerometer to be aligned with gravity.
@@ -922,13 +969,41 @@ LOG_ADD(LOG_FLOAT, zVariance, &gyroBiasRunning.variance.z)
 LOG_GROUP_STOP(gyro)
 #endif
 
+/**
+ * An inertial measurement unit (IMU) is an electronic device that measures and
+ * reports a body's specific force, angular rate, and sometimes the orientation
+ * of the body, using a combination of accelerometers, gyroscopes, and
+ * sometimes magnetometers.
+ */
 PARAM_GROUP_START(imu_sensors)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, HMC5883L, &isMagnetometerPresent)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, MS5611, &isBarometerPresent) // TODO: Rename MS5611 to LPS25H. Client needs to be updated at the same time.
+
+/**
+ * @brief Nonzero if AK8963 magnetometer is present
+ */
+PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, AK8963, &isMagnetometerPresent)
+
+/**
+ * @brief Nonzero if LPS25H barometer is present
+ */
+PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, LPS25H, &isBarometerPresent)
+
 PARAM_GROUP_STOP(imu_sensors)
 
 PARAM_GROUP_START(imu_tests)
+
+/**
+ * @brief Nonzero if the MPU6500 self-test passes
+ */
 PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, MPU6500, &isMpu6500TestPassed)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, HMC5883L, &isAK8963TestPassed)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, MS5611, &isLPS25HTestPassed) // TODO: Rename MS5611 to LPS25H. Client needs to be updated at the same time.
+
+/**
+ * @brief Nonzero if the AK8963 self-test passes
+ */
+PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, AK8963, &isAK8963TestPassed)
+
+/**
+ * @brief Nonzero if the LPS25H self-test passes
+ */
+PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, LPS25H, &isLPS25HTestPassed)
+
 PARAM_GROUP_STOP(imu_tests)

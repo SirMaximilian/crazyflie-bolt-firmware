@@ -53,7 +53,7 @@ static StaticSemaphore_t waitUntilSendDoneBuffer;
 static bool isInit = false;
 
 static DMA_InitTypeDef DMA_InitStructureShare;
-static uint8_t dmaBuffer[128];
+static uint8_t dmaBuffer[UART2_DMA_BUFFER_SIZE];
 static bool    isUartDmaInitialized;
 static uint32_t initialDMACount;
 
@@ -239,7 +239,7 @@ void uart2SendDataDmaBlocking(uint32_t size, uint8_t* data)
 
 int uart2Putchar(int ch)
 {
-    uart2SendData(1, (uint8_t *)&ch);
+  uart2SendData(1, (uint8_t *)&ch);
 
     return (unsigned char)ch;
 }
@@ -330,15 +330,20 @@ void uart2HandleDataFromISR(uint8_t c, BaseType_t * const pxHigherPriorityTaskWo
 
 #else
 
-bool uart2GetDataWithTimout(uint8_t *c)
+bool uart2GetDataWithTimeout(uint8_t *c, const uint32_t timeoutTicks)
 {
-  if (xQueueReceive(uart2queue, c, UART2_DATA_TIMEOUT_TICKS) == pdTRUE)
+  if (xQueueReceive(uart2queue, c, timeoutTicks) == pdTRUE)
   {
     return true;
   }
 
   *c = 0;
   return false;
+}
+
+bool uart2GetDataWithDefaultTimeout(uint8_t *c)
+{
+  return uart2GetDataWithTimeout(c, UART2_DATA_TIMEOUT_TICKS);
 }
 
 void uart2Getchar(char * ch)

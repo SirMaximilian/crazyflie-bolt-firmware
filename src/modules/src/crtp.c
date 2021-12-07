@@ -80,8 +80,8 @@ static xQueueHandle queues[CRTP_NBR_OF_PORTS];
 static volatile CrtpCallback callbacks[CRTP_NBR_OF_PORTS];
 static void updateStats();
 
-STATIC_MEM_TASK_ALLOC(crtpTxTask, CRTP_TX_TASK_STACKSIZE);
-STATIC_MEM_TASK_ALLOC(crtpRxTask, CRTP_RX_TASK_STACKSIZE);
+STATIC_MEM_TASK_ALLOC_STACK_NO_DMA_CCM_SAFE(crtpTxTask, CRTP_TX_TASK_STACKSIZE);
+STATIC_MEM_TASK_ALLOC_STACK_NO_DMA_CCM_SAFE(crtpRxTask, CRTP_RX_TASK_STACKSIZE);
 
 void crtpInit(void)
 {
@@ -179,11 +179,8 @@ void crtpRxTask(void *param)
       {
         if (queues[p.port])
         {
-          if (xQueueSend(queues[p.port], &p, 0) == errQUEUE_FULL)
-          {
-            // We should never drop packet
-            ASSERT(0);
-          }
+          // Block, since we should never drop a packet
+          xQueueSend(queues[p.port], &p, portMAX_DELAY);
         }
 
         if (callbacks[p.port])
@@ -284,4 +281,4 @@ static void updateStats()
 LOG_GROUP_START(crtp)
 LOG_ADD(LOG_UINT16, rxRate, &stats.rxRate)
 LOG_ADD(LOG_UINT16, txRate, &stats.txRate)
-LOG_GROUP_STOP(tdoa)
+LOG_GROUP_STOP(crtp)

@@ -33,6 +33,7 @@
 #include "deck.h"
 #include "log.h"
 #include "param.h"
+#include "eventtrigger.h"
 #include "i2cdev.h"
 
 #define DEBUG_MODULE "ACTIVE_MARKER"
@@ -56,7 +57,7 @@ static uint8_t currentId[LED_COUNT] = {0xff, 0xff, 0xff, 0xff};
 static uint8_t requestedId[LED_COUNT] = {1, 3, 4, 2}; // 1 to 4, clockwise
 
 #define MODE_OFF 0
-#define MODE_ON 1
+#define MODE_PWM 1
 #define MODE_MODULATED 2
 #define MODE_QUALISYS 3
 #define MODE_UART_TEST 0xff
@@ -71,6 +72,9 @@ static uint8_t deckButtonSensorValue = 0;
 static uint32_t nextPollTime = 0;
 static const uint32_t pollIntervall = M2T(100);
 static bool i2cOk = false;
+
+// defines eventTrigger_activeMarkerModeChanged
+EVENTTRIGGER(activeMarkerModeChanged, uint8, mode)
 
 #ifdef ACTIVE_MARKER_DECK_TEST
 static bool activeMarkerDeckCanStart = false;
@@ -150,6 +154,9 @@ static void handleModeUpdate() {
   if (currentDeckMode != requestedDeckMode) {
     currentDeckMode = requestedDeckMode;
     i2cdevWriteReg8(I2C1_DEV, DECK_I2C_ADDRESS, MEM_ADR_MODE, 1, &currentDeckMode);
+
+    eventTrigger_activeMarkerModeChanged_payload.mode = currentDeckMode;
+    eventTrigger(&eventTrigger_activeMarkerModeChanged);
   }
 }
 
@@ -190,7 +197,7 @@ static void task(void *param) {
 
     vTaskDelay(M2T(delay));
   }
-  
+
 }
 
 static const DeckDriver deck_info = {
@@ -204,12 +211,85 @@ static const DeckDriver deck_info = {
 
 DECK_DRIVER(deck_info);
 
+/**
+ *
+ * The Active Marker deck is mainly designed for Qualisys mocap systems and
+ * supports Qualisys Active markers, but it can also be used with other systems
+ * in a simplified mode. The deck has 4 arms with one IR LED on the tip of each
+ * arm and a light sensor in the center of the deck.
+
+ * The deck is configured using the parameter sub system, for details on which
+ * parameter to use, see below.
+ */
 PARAM_GROUP_START(activeMarker)
-PARAM_ADD(PARAM_UINT8, front, &requestedId[0])
-PARAM_ADD(PARAM_UINT8, back, &requestedId[1])
-PARAM_ADD(PARAM_UINT8, left, &requestedId[2])
-PARAM_ADD(PARAM_UINT8, right, &requestedId[3])
-PARAM_ADD(PARAM_UINT8, mode, &requestedDeckMode)
+
+/**
+ * @brief Qualisys id of marker for front (default: 1)
+ *
+ * In Qualisys mode the front LED act as an Active marker with IDs that are
+ * in the range 0 - 170.
+ */
+PARAM_ADD_CORE(PARAM_UINT8, front, &requestedId[0])
+
+/**
+ * @brief Qualisys id of marker for back (default: 3)
+ *
+ * In Qualisys mode the back LED act as an Active marker with IDs that are
+ * in the range 0 - 170.
+ */
+PARAM_ADD_CORE(PARAM_UINT8, back, &requestedId[1])
+
+/**
+ * @brief Qualisys id of marker for left (default: 4)
+ *
+ * In Qualisys mode the left LED act as an Active marker with IDs that are
+ * in the range 0 - 170.
+ */
+PARAM_ADD_CORE(PARAM_UINT8, left, &requestedId[2])
+
+/**
+ * @brief Qualisys id of marker for right (default: 2)
+ *
+ * In Qualisys mode the right LED act as an Active marker with IDs that are
+ * in the range 0 - 170.
+ */
+PARAM_ADD_CORE(PARAM_UINT8, right, &requestedId[3])
+
+/**
+ * @brief Off(0), pwm(1), modulated(2) or qualisys(3)
+ *
+ * |    Mode    |    Value      |         Comment                | \n
+ * | -          | -             | -                              | \n
+ * | OFF        |   0           |    Always off                  | \n
+ * | PWM        |   1           |    Always on, PWM modulated    | \n
+ * | MODULATED  |   2           |    Switching                   | \n
+ * | QUALISYS   |   3 (default) |    Qualisys Active Marker mode | \n
+ *
+ * 	
+ * ### Off mode
+ *
+ * All marker LEDs are turned off.
+ *
+ * ### PWM mode
+ *
+ * The marker LEDs are turned on and PWM modulated. The brightness of each LED
+ * is controlled by the marker parameters below, in the range 0 - 255.
+ *
+ * ### Modulated mode
+ *
+ * The LEDs are switched on and off at around 42 kHz (24 micro seconds cycle).
+ * The brightness of the LEDs during the “on” part of the cycle is controlled
+ * by the marker parameters below, in the range 0 - 255.
+ *
+ * ### Qualisys mode
+ *
+ * In this mode the LEDs act as Active markers with IDs that are identified by
+ * the Qualisys system and used for better 6-dof identification and tracking.
+ * The IDs are controlled by the marker parameters. The Qualisys systems
+ * and the deck currently supports IDs in the range [0 - 170]
+ */
+PARAM_ADD_CORE(PARAM_UINT8, mode, &requestedDeckMode)
+
 PARAM_ADD(PARAM_UINT8, poll, &doPollDeckButtonSensor)
 
 #ifdef ACTIVE_MARKER_DECK_TEST
@@ -217,6 +297,20 @@ PARAM_ADD(PARAM_UINT8, canStart, &activeMarkerDeckCanStart)
 #endif
 
 PARAM_GROUP_STOP(activeMarker)
+
+/**
+ * The deck parameter group tells us which decks are connected.
+ * There is one parameter per official deck and the parameter is nonzero if the
+ * deck is connected.
+ */
+PARAM_GROUP_START(deck)
+
+/**
+ * @brief Nonzero if [Active Marker deck](%https://www.bitcraze.io/products/active-marker-deck) is attached
+ */
+PARAM_ADD_CORE(PARAM_UINT8 | PARAM_RONLY, bcActiveMarker, &isInit)
+
+PARAM_GROUP_STOP(deck)
 
 LOG_GROUP_START(activeMarker)
 LOG_ADD(LOG_UINT8, btSns, &deckButtonSensorValue)

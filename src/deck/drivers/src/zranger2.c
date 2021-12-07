@@ -7,7 +7,7 @@
  *
  * Crazyflie control firmware
  *
- * Copyright (C) 2012 BitCraze AB
+ * Copyright (C) 2021 BitCraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,6 +36,7 @@
 #include "log.h"
 #include "param.h"
 #include "range.h"
+#include "static_mem.h"
 
 #include "i2cdev.h"
 #include "zranger2.h"
@@ -56,7 +57,7 @@ static uint16_t range_last = 0;
 
 static bool isInit;
 
-static VL53L1_Dev_t dev;
+NO_DMA_CCM_SAFE_ZERO_INIT static VL53L1_Dev_t dev;
 
 static uint16_t zRanger2GetMeasurementAndRestart(VL53L1_Dev_t *dev)
 {
@@ -148,7 +149,8 @@ static const DeckDriver zranger2_deck = {
   .vid = 0xBC,
   .pid = 0x0E,
   .name = "bcZRanger2",
-  .usedGpio = 0x0C,
+  .usedGpio = 0,
+  .usedPeriph = DECK_USING_I2C,
 
   .init = zRanger2Init,
   .test = zRanger2Test,
@@ -157,5 +159,10 @@ static const DeckDriver zranger2_deck = {
 DECK_DRIVER(zranger2_deck);
 
 PARAM_GROUP_START(deck)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, bcZRanger2, &isInit)
+
+/**
+ * @brief Nonzero if [Z-ranger deck v2](%https://store.bitcraze.io/collections/decks/products/z-ranger-deck-v2) is attached
+ */
+PARAM_ADD_CORE(PARAM_UINT8 | PARAM_RONLY, bcZRanger2, &isInit)
+
 PARAM_GROUP_STOP(deck)

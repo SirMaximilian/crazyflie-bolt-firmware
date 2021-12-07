@@ -30,17 +30,8 @@
  * lighthouse.h: lighthouse tracking system receiver
  */
 
-#ifndef __LIGHTHOUSE_H__
-#define __LIGHTHOUSE_H__
+#pragma once
 
-#include "lighthouse_geometry.h"
 
-extern baseStationGeometry_t lighthouseBaseStationsGeometry[2];
-
-/**
- * @brief Call when the lighthouseBaseStationsGeometry data has been updated
- * to recalculate cached data
- */
-void lightHouseGeometryDataUpdated();
-
-#endif // __LIGHTHOUSE_H__
+#define LIGHTHOUSE_BITSTREAM_CRC 0x112bc794
+#define LIGHTHOUSE_BITSTREAM_SIZE 104093

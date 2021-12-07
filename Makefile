@@ -1,5 +1,5 @@
 # CrazyFlie's Makefile
-# Copyright (c) 2011,2012 Bitcraze AB
+# Copyright (c) 2011-2021 Bitcraze AB
 # This Makefile compiles all the object file to ./bin/ and the resulting firmware
 # image in ./cfX.elf and ./cfX.bin
 
@@ -13,10 +13,10 @@ CFLAGS += $(EXTRA_CFLAGS)
 
 ######### JTAG and environment configuration ##########
 OPENOCD           ?= openocd
-OPENOCD_INTERFACE ?= interface/stlink-v2.cfg
+OPENOCD_INTERFACE ?= interface/stlink.cfg
 OPENOCD_CMDS      ?=
 CROSS_COMPILE     ?= arm-none-eabi-
-PYTHON            ?= python
+PYTHON            ?= python3
 DFU_UTIL          ?= dfu-util
 CLOAD             ?= 1
 DEBUG             ?= 0
@@ -35,17 +35,12 @@ include $(CRAZYFLIE_BASE)/tools/make/platform.mk
 
 CFLAGS += -DCRAZYFLIE_FW
 
-######### Stabilizer configuration ##########
-## These are set by the platform (see tools/make/platforms/*.mk), can be overwritten here
-ESTIMATOR          ?= any
-CONTROLLER         ?= Any # one of Any, PID, Mellinger, INDI
-POWER_DISTRIBUTION ?= stock
-
 #OpenOCD conf
 RTOS_DEBUG        ?= 0
 
 LIB = $(CRAZYFLIE_BASE)/src/lib
 FREERTOS = $(CRAZYFLIE_BASE)/vendor/FreeRTOS
+CFLAGS += -DBLOBS_LOC='"$(CRAZYFLIE_BASE)/blobs/"'
 
 # Communication Link
 UART2_LINK        ?= 0
@@ -58,7 +53,7 @@ PORT = $(FREERTOS)/portable/GCC/ARM_CM4F
 LINKER_DIR = $(CRAZYFLIE_BASE)/tools/make/F405/linker
 ST_OBJ_DIR  = $(CRAZYFLIE_BASE)/tools/make/F405
 
-OPENOCD_TARGET    ?= target/stm32f4x_stlink.cfg
+OPENOCD_TARGET    ?= target/stm32f4x.cfg
 
 
 # St Lib
@@ -78,13 +73,16 @@ ST_OBJ += usb_core.o usb_dcd_int.o usb_dcd.o
 ST_OBJ += usbd_ioreq.o usbd_req.o usbd_core.o
 
 PROCESSOR = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
-CFLAGS += -fno-math-errno -DARM_MATH_CM4 -D__FPU_PRESENT=1 -D__TARGET_FPU_VFP -mfp16-format=ieee
+CFLAGS += -fno-math-errno -DARM_MATH_CM4 -D__FPU_PRESENT=1 -mfp16-format=ieee
 
 #Flags required by the ST library
 CFLAGS += -DSTM32F4XX -DSTM32F40_41xxx -DHSE_VALUE=8000000 -DUSE_STDPERIPH_DRIVER
 
 LOAD_ADDRESS_stm32f4 = 0x8000000
 LOAD_ADDRESS_CLOAD_stm32f4 = 0x8004000
+MEM_SIZE_FLASH_K = 1008
+MEM_SIZE_RAM_K = 128
+MEM_SIZE_CCM_K = 64
 endif
 
 ################ Build configuration ##################
@@ -106,7 +104,7 @@ FREERTOS_OBJ = list.o tasks.o queue.o timers.o $(MEMMANG_OBJ)
 
 #FatFS
 VPATH += $(LIB)/FatFS
-PROJ_OBJ += diskio.o ff.o syscall.o unicode.o fatfs_sd.o
+PROJ_OBJ += ff.o ffunicode.o fatfs_sd.o
 ifeq ($(FATFS_DISKIO_TESTS), 1)
 PROJ_OBJ += diskio_function_tests.o
 CFLAGS += -DUSD_RUN_DISKIO_FUNCTION_TESTS
@@ -123,8 +121,8 @@ CFLAGS += -DAPP_PRIORITY=$(APP_PRIORITY)
 endif
 
 # Crazyflie sources
-VPATH += $(CRAZYFLIE_BASE)/src/init $(CRAZYFLIE_BASE)/src/hal/src $(CRAZYFLIE_BASE)/src/modules/src $(CRAZYFLIE_BASE)/src/utils/src $(CRAZYFLIE_BASE)/src/drivers/bosch/src $(CRAZYFLIE_BASE)/src/drivers/src $(CRAZYFLIE_BASE)/src/platform
-
+VPATH += $(CRAZYFLIE_BASE)/src/init $(CRAZYFLIE_BASE)/src/hal/src $(CRAZYFLIE_BASE)/src/modules/src $(CRAZYFLIE_BASE)/src/modules/src/lighthouse $(CRAZYFLIE_BASE)/src/modules/src/kalman_core $(CRAZYFLIE_BASE)/src/utils/src $(CRAZYFLIE_BASE)/src/drivers/bosch/src $(CRAZYFLIE_BASE)/src/drivers/src $(CRAZYFLIE_BASE)/src/platform $(CRAZYFLIE_BASE)/src/drivers/esp32/src
+VPATH += $(CRAZYFLIE_BASE)/src/utils/src/kve
 
 ############### Source files configuration ################
 
@@ -134,7 +132,7 @@ PROJ_OBJ += platform.o platform_utils.o platform_$(PLATFORM).o platform_$(CPU).o
 
 # Drivers
 PROJ_OBJ += exti.o nvic.o motors.o
-PROJ_OBJ += led_f405.o mpu6500.o i2cdev_f405.o ws2812_cf2.o lps25h.o i2c_drv.o
+PROJ_OBJ += led.o mpu6500.o i2cdev.o ws2812_cf2.o lps25h.o i2c_drv.o
 PROJ_OBJ += ak8963.o eeprom.o maxsonar.o piezo.o
 PROJ_OBJ += uart_syslink.o swd.o uart1.o uart2.o watchdog.o
 PROJ_OBJ += cppm.o
@@ -142,14 +140,16 @@ PROJ_OBJ += bmi055_accel.o bmi055_gyro.o bmi160.o bmp280.o bstdr_comm_support.o 
 PROJ_OBJ += bmi088_accel.o bmi088_gyro.o bmi088_fifo.o bmp3.o
 PROJ_OBJ += pca9685.o vl53l0x.o pca95x4.o pca9555.o vl53l1x.o pmw3901.o
 PROJ_OBJ += amg8833.o lh_bootloader.o
+PROJ_OBJ += esp_rom_bootloader.o esp_slip.o
 
 # USB Files
 PROJ_OBJ += usb_bsp.o usblink.o usbd_desc.o usb.o
 
 # Hal
 PROJ_OBJ += crtp.o ledseq.o freeRTOSdebug.o buzzer.o
-PROJ_OBJ += pm_$(CPU).o syslink.o radiolink.o ow_syslink.o proximity.o usec_time.o
+PROJ_OBJ += pm_$(CPU).o syslink.o radiolink.o ow_syslink.o ow_common.o proximity.o usec_time.o
 PROJ_OBJ += sensors.o
+PROJ_OBJ += storage.o
 
 # libdw
 PROJ_OBJ += libdw1000.o libdw1000Spi.o
@@ -160,32 +160,39 @@ PROJ_OBJ += vl53l1_api_calibration.o vl53l1_api_debug.o vl53l1_api_preset_modes.
 PROJ_OBJ += vl53l1_register_funcs.o vl53l1_wait.o vl53l1_core_support.o
 
 # Modules
-PROJ_OBJ += system.o comm.o console.o pid.o crtpservice.o param.o
-PROJ_OBJ += log.o worker.o trigger.o sitaw.o queuemonitor.o msp.o
+PROJ_OBJ += system.o comm.o console.o pid.o crtpservice.o param_task.o param_logic.o
+PROJ_OBJ += log.o worker.o queuemonitor.o msp.o
 PROJ_OBJ += platformservice.o sound_cf2.o extrx.o sysload.o mem.o
-PROJ_OBJ += range.o app_handler.o static_mem.o
+PROJ_OBJ += range.o app_handler.o static_mem.o app_channel.o
+PROJ_OBJ += eventtrigger.o supervisor.o
 
 # Stabilizer modules
 PROJ_OBJ += commander.o crtp_commander.o crtp_commander_rpyt.o
-PROJ_OBJ += crtp_commander_generic.o crtp_localization_service.o
+PROJ_OBJ += crtp_commander_generic.o crtp_localization_service.o peer_localization.o
 PROJ_OBJ += attitude_pid_controller.o sensfusion6.o stabilizer.o
-PROJ_OBJ += position_estimator_altitude.o position_controller_pid.o
+PROJ_OBJ += position_estimator_altitude.o position_controller_pid.o position_controller_indi.o
 PROJ_OBJ += estimator.o estimator_complementary.o
 PROJ_OBJ += controller.o controller_pid.o controller_mellinger.o controller_indi.o
 PROJ_OBJ += power_distribution_$(POWER_DISTRIBUTION).o
+PROJ_OBJ += collision_avoidance.o health.o
+
+# Kalman estimator
 PROJ_OBJ += estimator_kalman.o kalman_core.o kalman_supervisor.o
+PROJ_OBJ += mm_distance.o mm_absolute_height.o mm_position.o mm_pose.o mm_tdoa.o mm_flow.o mm_tof.o mm_yaw_error.o mm_sweep_angles.o
+PROJ_OBJ += mm_tdoa_robust.o mm_distance_robust.o
 
 # High-Level Commander
 PROJ_OBJ += crtp_commander_high_level.o planner.o pptraj.o pptraj_compressed.o
 
 # Deck Core
-PROJ_OBJ += deck.o deck_info.o deck_drivers.o deck_test.o
+PROJ_OBJ += deck.o deck_info.o deck_drivers.o deck_test.o deck_memory.o
 
 # Deck API
 PROJ_OBJ += deck_constants.o
 PROJ_OBJ += deck_digital.o
 PROJ_OBJ += deck_analog.o
 PROJ_OBJ += deck_spi.o
+PROJ_OBJ += deck_spi3.o
 
 # Decks
 PROJ_OBJ += bigquad.o
@@ -247,11 +254,13 @@ PROJ_OBJ += exptestBolt.o
 
 
 # Utilities
-PROJ_OBJ += filter.o cpuid.o cfassert.o  eprintf.o crc.o num.o debug.o
+PROJ_OBJ += filter.o cpuid.o cfassert.o  eprintf.o crc32.o num.o debug.o
 PROJ_OBJ += version.o FreeRTOS-openocd.o
-PROJ_OBJ += configblockeeprom.o crc_bosch.o
-PROJ_OBJ += sleepus.o statsCnt.o
-PROJ_OBJ += pulse_processor.o lighthouse_geometry.o ootx_decoder.o lighthouse_calibration.o
+PROJ_OBJ += configblockeeprom.o
+PROJ_OBJ += sleepus.o statsCnt.o rateSupervisor.o
+PROJ_OBJ += lighthouse_core.o pulse_processor.o pulse_processor_v1.o pulse_processor_v2.o lighthouse_geometry.o ootx_decoder.o lighthouse_calibration.o lighthouse_deck_flasher.o lighthouse_position_est.o lighthouse_storage.o lighthouse_transmit.o
+PROJ_OBJ += kve_storage.o kve.o
+PROJ_OBJ += esp_deck_flasher.o
 
 ifeq ($(DEBUG_PRINT_ON_SEGGER_RTT), 1)
 VPATH += $(LIB)/Segger_RTT/RTT
@@ -263,7 +272,7 @@ endif
 # Libs
 PROJ_OBJ += libarm_math.a
 
-OBJ = $(FREERTOS_OBJ) $(PORT_OBJ) $(ST_OBJ) $(PROJ_OBJ) $(CRT0)
+OBJ = $(FREERTOS_OBJ) $(PORT_OBJ) $(ST_OBJ) $(PROJ_OBJ) $(APP_OBJ) $(CRT0)
 
 ############### Compilation configuration ################
 AS = $(CROSS_COMPILE)as
@@ -273,32 +282,47 @@ SIZE = $(CROSS_COMPILE)size
 OBJCOPY = $(CROSS_COMPILE)objcopy
 GDB = $(CROSS_COMPILE)gdb
 
-INCLUDES += -I$(FREERTOS)/include -I$(PORT) -I$(CRAZYFLIE_BASE)/src
-INCLUDES += -I$(CRAZYFLIE_BASE)/src/config -I$(CRAZYFLIE_BASE)/src/hal/interface -I$(CRAZYFLIE_BASE)/src/modules/interface
-INCLUDES += -I$(CRAZYFLIE_BASE)/src/utils/interface -I$(CRAZYFLIE_BASE)/src/drivers/interface -I$(CRAZYFLIE_BASE)/src/platform
-INCLUDES += -I$(CRAZYFLIE_BASE)/vendor/CMSIS/CMSIS/Include -I$(CRAZYFLIE_BASE)/src/drivers/bosch/interface
+INCLUDES += -I$(CRAZYFLIE_BASE)/vendor/CMSIS/CMSIS/Core/Include -I$(CRAZYFLIE_BASE)/vendor/CMSIS/CMSIS/DSP/Include
+INCLUDES += -I$(CRAZYFLIE_BASE)/vendor/libdw1000/inc
+INCLUDES += -I$(FREERTOS)/include -I$(PORT)
 
-INCLUDES += -I$(LIB)/STM32F4xx_StdPeriph_Driver/inc
+INCLUDES += -I$(CRAZYFLIE_BASE)/src/config
+INCLUDES += -I$(CRAZYFLIE_BASE)/src/platform
+
+INCLUDES += -I$(CRAZYFLIE_BASE)/src/deck/interface -I$(CRAZYFLIE_BASE)/src/deck/drivers/interface
+INCLUDES += -I$(CRAZYFLIE_BASE)/src/drivers/interface -I$(CRAZYFLIE_BASE)/src/drivers/bosch/interface -I$(CRAZYFLIE_BASE)/src/drivers/esp32/interface
+INCLUDES += -I$(CRAZYFLIE_BASE)/src/hal/interface
+INCLUDES += -I$(CRAZYFLIE_BASE)/src/modules/interface -I$(CRAZYFLIE_BASE)/src/modules/interface/kalman_core -I$(CRAZYFLIE_BASE)/src/modules/interface/lighthouse
+INCLUDES += -I$(CRAZYFLIE_BASE)/src/utils/interface -I$(CRAZYFLIE_BASE)/src/utils/interface/kve -I$(CRAZYFLIE_BASE)/src/utils/interface/lighthouse -I$(CRAZYFLIE_BASE)/src/utils/interface/tdoa
+
+INCLUDES += -I$(LIB)/FatFS
 INCLUDES += -I$(LIB)/CMSIS/STM32F4xx/Include
 INCLUDES += -I$(LIB)/STM32_USB_Device_Library/Core/inc
 INCLUDES += -I$(LIB)/STM32_USB_OTG_Driver/inc
-INCLUDES += -I$(CRAZYFLIE_BASE)/src/deck/interface -I$(CRAZYFLIE_BASE)/src/deck/drivers/interface
-INCLUDES += -I$(CRAZYFLIE_BASE)/src/utils/interface/clockCorrection
-INCLUDES += -I$(CRAZYFLIE_BASE)/src/utils/interface/tdoa
-INCLUDES += -I$(CRAZYFLIE_BASE)/src/utils/interface/lighthouse
-INCLUDES += -I$(CRAZYFLIE_BASE)/vendor/libdw1000/inc
-INCLUDES += -I$(LIB)/FatFS
-INCLUDES += -I$(LIB)/vl53l1
-INCLUDES += -I$(LIB)/vl53l1/core/inc
+INCLUDES += -I$(LIB)/STM32F4xx_StdPeriph_Driver/inc
+INCLUDES += -I$(LIB)/vl53l1 -I$(LIB)/vl53l1/core/inc
 
+CFLAGS += -g3
 ifeq ($(DEBUG), 1)
-  CFLAGS += -O0 -g3 -DDEBUG
+  CFLAGS += -O0 -DDEBUG
+
   # Prevent silent errors when converting between types (requires explicit casting)
   CFLAGS += -Wconversion
 else
-	# Fail on warnings
-  CFLAGS += -Os -g3 -Werror
+  CFLAGS += -Os
+
+  # Fail on warnings
+  CFLAGS += -Werror
 endif
+
+# Disable warnings for unaligned addresses in packed structs (added in GCC 9)
+CFLAGS += -Wno-address-of-packed-member
+
+# Disable warnings for incorrectly detected region size (added in GCC 11)
+# The compiler is not detecting properly GPIO structure size
+CFLAGS += -Wno-array-bounds
+CFLAGS += -Wno-stringop-overread
+CFLAGS += -Wno-stringop-overflow
 
 ifeq ($(LTO), 1)
   CFLAGS += -flto
@@ -310,6 +334,7 @@ CFLAGS += $(PROCESSOR) $(INCLUDES)
 
 
 CFLAGS += -Wall -Wmissing-braces -fno-strict-aliasing $(C_PROFILE) -std=gnu11
+# CFLAGS += -O0 -Wmissing-braces -fno-strict-aliasing $(C_PROFILE) -std=gnu11 #Use this compiler during debugger, as it has a different optimizer so you can better track variables
 # Compiler flags to generate dependency files:
 CFLAGS += -MD -MP -MF $(BIN)/dep/$(@).d -MQ $(@)
 #Permits to remove un-used functions and global variables from output file
@@ -319,7 +344,7 @@ CFLAGS += -Wdouble-promotion
 
 
 ASFLAGS = $(PROCESSOR) $(INCLUDES)
-LDFLAGS = --specs=nosys.specs --specs=nano.specs $(PROCESSOR) -Wl,-Map=$(PROG).map,--cref,--gc-sections,--undefined=uxTopUsedPriority
+LDFLAGS += --specs=nosys.specs --specs=nano.specs $(PROCESSOR) -Wl,-Map=$(PROG).map,--cref,--gc-sections,--undefined=uxTopUsedPriority
 LDFLAGS += -L$(CRAZYFLIE_BASE)/tools/make/F405/linker
 
 #Flags required by the ST library
@@ -336,7 +361,7 @@ ifeq ($(LTO), 1)
 endif
 
 #Program name
-PROG = $(PLATFORM)
+PROG ?= $(PLATFORM)
 #Where to compile the .o
 BIN = bin
 VPATH += $(BIN)
@@ -351,8 +376,23 @@ ifeq ($(SHELL),/bin/sh)
   COL_RESET=\033[m
 endif
 
-#################### Targets ###############################
+# This define n-thing is a standard hack to get newlines in GNU Make.
+define n
 
+
+endef
+
+# Make sure that the submodules are up to date.
+# Check if there are any files in the vendor directories, if not warn the user.
+ifeq ($(wildcard $(CRAZYFLIE_BASE)/vendor/*/*),)
+  $(error $n                                                                   \
+    The submodules does not seem to be present, consider fetching them by:$n   \
+      $$ git submodule init$n                                                  \
+      $$ git submodule update$n                                                \
+  )
+endif
+
+#################### Targets ###############################
 
 all: bin/ bin/dep bin/vendor check_submodules build
 build:
@@ -392,7 +432,7 @@ ifeq ($(FATFS_DISKIO_TESTS), 1)
 endif
 
 size:
-	@$(SIZE) -B $(PROG).elf
+	@$(PYTHON) $(CRAZYFLIE_BASE)/tools/make/size.py $(SIZE) $(PROG).elf $(MEM_SIZE_FLASH_K) $(MEM_SIZE_RAM_K) $(MEM_SIZE_CCM_K)
 
 #Radio bootloader
 cload:
@@ -429,9 +469,13 @@ openocd:
 trace:
 	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets -f tools/trace/enable_trace.cfg
 
+rtt:
+	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets \
+	           -c "rtt setup 0x20000000 262144 \"SEGGER RTT\"" -c "rtt start" -c "rtt server start 2000 0"
+
 gdb: $(PROG).elf
 	$(GDB) -ex "target remote localhost:3333" -ex "monitor reset halt" $^
-
+  
 erase:
 	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) -f $(OPENOCD_TARGET) -c init -c targets -c "halt" -c "stm32f4x mass_erase 0" -c shutdown
 
@@ -450,3 +494,19 @@ include $(CRAZYFLIE_BASE)/tools/make/targets.mk
 unit:
 # The flag "-DUNITY_INCLUDE_DOUBLE" allows comparison of double values in Unity. See: https://stackoverflow.com/a/37790196
 	rake unit "DEFINES=$(CFLAGS) -DUNITY_INCLUDE_DOUBLE" "FILES=$(FILES)" "UNIT_TEST_STYLE=$(UNIT_TEST_STYLE)"
+
+# Python bindings
+MOD_INC = $(CRAZYFLIE_BASE)/src/modules/interface
+MOD_SRC = $(CRAZYFLIE_BASE)/src/modules/src
+
+bindings_python: bindings/setup.py bin/cffirmware_wrap.c $(MOD_SRC)/*.c
+	$(PYTHON) bindings/setup.py build_ext --inplace
+
+bin/cffirmware_wrap.c cffirmware.py: bindings/cffirmware.i $(MOD_INC)/*.h
+	swig -python -I$(MOD_INC) -o bin/cffirmware_wrap.c bindings/cffirmware.i
+	mv bin/cffirmware.py cffirmware.py
+
+test_python: bindings_python
+	$(PYTHON) -m pytest test_python
+
+.PHONY: all clean build compile unit prep erase flash check_submodules trace openocd gdb halt reset flash_dfu flash_verify cload size print_version clean_version bindings_python

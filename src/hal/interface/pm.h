@@ -1,6 +1,6 @@
 /**
- *    ||          ____  _ __                           
- * +------+      / __ )(_) /_______________ _____  ___ 
+ *    ||          ____  _ __
+ * +------+      / __ )(_) /_______________ _____  ___
  * | 0xBC |     / __  / / __/ ___/ ___/ __ `/_  / / _ \
  * +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
  *  ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
@@ -29,6 +29,7 @@
 
 #include "adc.h"
 #include "syslink.h"
+#include "deck.h"
 
 #ifndef CRITICAL_LOW_VOLTAGE
   #define PM_BAT_CRITICAL_LOW_VOLTAGE   3.0f
@@ -100,6 +101,8 @@ typedef enum
   USBWallAdapter,
 } PMUSBPower;
 
+typedef void (*graceful_shutdown_callback_t)();
+
 void pmInit(void);
 
 bool pmTest(void);
@@ -134,6 +137,22 @@ float pmGetBatteryVoltageMax(void);
 void pmBatteryUpdate(AdcGroup* adcValues);
 
 /**
+ * Returns true if the battery is below its low capacity threshold for an
+ * extended period of time.
+ */
+bool pmIsBatteryLow(void);
+
+/**
+ * Returns true if the charger is currently connected
+ */
+bool pmIsChargerConnected(void);
+
+/**
+ * Returns true if the battery is currently charging
+ */
+bool pmIsCharging(void);
+
+/**
  * Returns true if the battery is currently in use
  */
 bool pmIsDischarging(void);
@@ -141,7 +160,7 @@ bool pmIsDischarging(void);
 /**
  * Enable or disable external battery voltage measuring.
  */
-void pmEnableExtBatteryVoltMeasuring(uint8_t pin, float multiplier);
+void pmEnableExtBatteryVoltMeasuring(const deckPin_t pin, float multiplier);
 
 /**
  * Measure an external voltage.
@@ -151,11 +170,16 @@ float pmMeasureExtBatteryVoltage(void);
 /**
  * Enable or disable external battery current measuring.
  */
-void pmEnableExtBatteryCurrMeasuring(uint8_t pin, float ampPerVolt);
+void pmEnableExtBatteryCurrMeasuring(const deckPin_t pin, float ampPerVolt);
 
 /**
  * Measure an external current.
  */
 float pmMeasureExtBatteryCurrent(void);
+
+/**
+ * Register a callback to be run when the NRF51 signals shutdown
+ */
+bool pmRegisterGracefulShutdownCallback(graceful_shutdown_callback_t cb);
 
 #endif /* PM_H_ */

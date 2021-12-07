@@ -25,8 +25,7 @@
  */
 #include "exti.h"
 #include "led.h"
-#include "i2cdev.h"
-#include "ws2812.h"
+#include "motors.h"
 #include "power_distribution.h"
 #include "cfassert.h"
 
@@ -130,10 +129,8 @@ void DONT_DISCARD printHardFault(uint32_t* hardfaultArgs)
   UART_PRINT("DFSR = %x\n", (*((volatile unsigned int *)(0xE000ED30))));
   UART_PRINT("AFSR = %x\n", (*((volatile unsigned int *)(0xE000ED3C))));
 
-  ledClearAll();
-  ledSet(ERR_LED1, 1);
-  ledSet(ERR_LED2, 1);
   powerStop();
+  ledShowFaultPattern();
 
   storeAssertHardfaultData(
     stacked_r0,
@@ -153,9 +150,7 @@ void DONT_DISCARD printHardFault(uint32_t* hardfaultArgs)
 void DONT_DISCARD MemManage_Handler(void)
 {
   /* Go to infinite loop when Memory Manage exception occurs */
-  ledClearAll();
-  ledSet(ERR_LED1, 1);
-  ledSet(ERR_LED2, 1);
+  ledShowFaultPattern();
   powerStop();
 
   storeAssertTextData("MemManage");
@@ -169,10 +164,8 @@ void DONT_DISCARD MemManage_Handler(void)
 void DONT_DISCARD BusFault_Handler(void)
 {
   /* Go to infinite loop when Bus Fault exception occurs */
-  ledClearAll();
-  ledSet(ERR_LED1, 1);
-  ledSet(ERR_LED2, 1);
   powerStop();
+  ledShowFaultPattern();
 
   storeAssertTextData("BusFault");
   while (1)
@@ -185,10 +178,8 @@ void DONT_DISCARD BusFault_Handler(void)
 void DONT_DISCARD UsageFault_Handler(void)
 {
   /* Go to infinite loop when Usage Fault exception occurs */
-  ledClearAll();
-  ledSet(ERR_LED1, 1);
-  ledSet(ERR_LED2, 1);
   powerStop();
+  ledShowFaultPattern();
 
   storeAssertTextData("UsageFault");
   while (1)
@@ -200,9 +191,4 @@ void DONT_DISCARD UsageFault_Handler(void)
  */
 void DONT_DISCARD DebugMon_Handler(void)
 {
-}
-
-void DONT_DISCARD DMA1_Stream5_IRQHandler(void)
-{
-  ws2812DmaIsr();
 }

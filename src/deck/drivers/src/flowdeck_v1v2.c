@@ -7,7 +7,7 @@
  *
  * LPS node firmware.
  *
- * Copyright 2017, Bitcraze AB
+ * Copyright 2021, Bitcraze AB
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -40,6 +40,7 @@
 
 #include "cf_math.h"
 
+#include "usec_time.h"
 #include <stdlib.h>
 
 #define AVERAGE_HISTORY_LENGTH 4
@@ -60,6 +61,7 @@ float dpixelx_previous = 0;
 float dpixely_previous = 0;
 
 static uint8_t outlierCount = 0;
+static float stdFlow = 2.0f;
 
 static bool isInit1 = false;
 static bool isInit2 = false;
@@ -69,6 +71,13 @@ motionBurst_t currentMotion;
 // Disables pushing the flow measurement in the EKF
 static bool useFlowDisabled = false;
 
+// Turn on adaptive standard deviation for the kalman filter
+static bool useAdaptiveStd = false;
+
+// Set standard deviation flow
+// (will not work if useAdaptiveStd is on)
+static float flowStdFixed = 2.0f;
+
 #define NCS_PIN DECK_GPIO_IO3
 
 
@@ -76,6 +85,7 @@ static void flowdeckTask(void *param)
 {
   systemWaitStart();
 
+  uint64_t lastTime  = usecTimestamp();
   while(1) {
     vTaskDelay(10);
 
@@ -89,11 +99,28 @@ static void flowdeckTask(void *param)
     // Outlier removal
     if (abs(accpx) < OULIER_LIMIT && abs(accpy) < OULIER_LIMIT) {
 
-      // Form flow measurement struct and push into the EKF
-      flowMeasurement_t flowData;
-      flowData.stdDevX = 0.25;    // [pixels] should perhaps be made larger?
-      flowData.stdDevY = 0.25;    // [pixels] should perhaps be made larger?
-      flowData.dt = 0.01;
+    if (useAdaptiveStd)
+    {
+      // The standard deviation is fitted by measurements flying over low and high texture
+      //   and looking at the shutter time
+      float shutter_f = (float)currentMotion.shutter;
+      stdFlow=0.0007984f *shutter_f + 0.4335f;
+
+
+      // The formula with the amount of features instead
+      /*float squal_f = (float)currentMotion.squal;
+      stdFlow =  -0.01257f * squal_f + 4.406f; */
+      if (stdFlow < 0.1f) stdFlow=0.1f;
+    } else {
+      stdFlow = flowStdFixed;
+    }
+
+
+    // Form flow measurement struct and push into the EKF
+    flowMeasurement_t flowData;
+    flowData.stdDevX = stdFlow;
+    flowData.stdDevY = stdFlow;
+    flowData.dt = 0.01;
 
 #if defined(USE_MA_SMOOTHING)
       // Use MA Smoothing
@@ -121,8 +148,11 @@ static void flowdeckTask(void *param)
       flowData.dpixelx = (float)accpx;
       flowData.dpixely = (float)accpy;
 #endif
-      // Push measurements into the estimator
-      if (!useFlowDisabled) {
+      // Push measurements into the estimator if flow is not disabled
+      //    and the PMW flow sensor indicates motion detection
+      if (!useFlowDisabled && currentMotion.motion == 0xB0) {
+        flowData.dt = (float)(usecTimestamp()-lastTime)/1000000.0f;
+        lastTime = usecTimestamp();
         estimatorEnqueueFlow(&flowData);
       }
     } else {
@@ -154,6 +184,7 @@ static bool flowdeck1Test()
 {
   if (!isInit1) {
     DEBUG_PRINT("Error while initializing the PMW3901 sensor\n");
+    return false;
   }
 
   // Test the VL53L0 driver
@@ -166,8 +197,8 @@ static const DeckDriver flowdeck1_deck = {
   .vid = 0xBC,
   .pid = 0x0A,
   .name = "bcFlow",
-
-  .usedGpio = 0,  // FIXME: set the used pins
+  .usedGpio = DECK_USING_IO_3,
+  .usedPeriph = DECK_USING_I2C | DECK_USING_SPI,
   .requiredEstimator = kalmanEstimator,
 
   .init = flowdeck1Init,
@@ -199,6 +230,7 @@ static bool flowdeck2Test()
 {
   if (!isInit2) {
     DEBUG_PRINT("Error while initializing the PMW3901 sensor\n");
+    return false;
   }
 
   // Test the VL53L1 driver
@@ -212,7 +244,8 @@ static const DeckDriver flowdeck2_deck = {
   .pid = 0x0F,
   .name = "bcFlow2",
 
-  .usedGpio = 0,  // FIXME: set the used pins
+  .usedGpio = DECK_USING_IO_3,
+  .usedPeriph = DECK_USING_I2C | DECK_USING_SPI,
   .requiredEstimator = kalmanEstimator,
 
   .init = flowdeck2Init,
@@ -221,22 +254,81 @@ static const DeckDriver flowdeck2_deck = {
 
 DECK_DRIVER(flowdeck2_deck);
 
+/**
+ * Logging variables of the motion sensor of the flowdeck
+ */
 LOG_GROUP_START(motion)
+/**
+ * @brief True if motion occured since the last measurement
+ */
 LOG_ADD(LOG_UINT8, motion, &currentMotion.motion)
+/**
+ * @brief Flow X  measurment  [flow/fr]
+ */
 LOG_ADD(LOG_INT16, deltaX, &currentMotion.deltaX)
+/**
+ * @brief Flow Y measurement [flow/fr]
+ */
 LOG_ADD(LOG_INT16, deltaY, &currentMotion.deltaY)
+/**
+ * @brief Shutter time [clock cycles]
+ */
 LOG_ADD(LOG_UINT16, shutter, &currentMotion.shutter)
+/**
+ * @brief Maximum raw data value in frame
+ */
 LOG_ADD(LOG_UINT8, maxRaw, &currentMotion.maxRawData)
+/**
+ * @brief Minimum raw data value in frame
+ */
 LOG_ADD(LOG_UINT8, minRaw, &currentMotion.minRawData)
+/**
+ * @brief Avarage raw data value
+ */
 LOG_ADD(LOG_UINT8, Rawsum, &currentMotion.rawDataSum)
+/**
+ * @brief Counted flow outliers exluded from the estimator
+ */
 LOG_ADD(LOG_UINT8, outlierCount, &outlierCount)
+/**
+ * @brief Count of surface feature
+ */
+LOG_ADD(LOG_UINT8, squal, &currentMotion.squal)
+/**
+ * @brief Standard deviation of flow measurement
+ */
+LOG_ADD(LOG_FLOAT, std, &stdFlow)
 LOG_GROUP_STOP(motion)
 
+/**
+ * Settings and parameters for handling of the flowdecks
+ * measurments
+ */
 PARAM_GROUP_START(motion)
+/**
+ * @brief Nonzero to not push the flow measurement in the EKF (default: 0)
+ */
 PARAM_ADD(PARAM_UINT8, disable, &useFlowDisabled)
+/**
+ * @brief Nonzero to turn on adaptive standard devivation estimation (default: 0)
+ */
+PARAM_ADD(PARAM_UINT8, adaptive, &useAdaptiveStd)
+/**
+ * @brief Set standard devivation flow measurement (default: 2.0f)
+ */
+PARAM_ADD_CORE(PARAM_FLOAT, flowStdFixed, &flowStdFixed)
 PARAM_GROUP_STOP(motion)
 
 PARAM_GROUP_START(deck)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, bcFlow, &isInit1)
-PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, bcFlow2, &isInit2)
+
+/**
+ * @brief Nonzero if Flow deck v1 is attached
+ */
+PARAM_ADD_CORE(PARAM_UINT8 | PARAM_RONLY, bcFlow, &isInit1)
+
+/**
+ * @brief Nonzero if [Flow deck v2](%https://store.bitcraze.io/collections/decks/products/flow-deck-v2) is attached
+ */
+PARAM_ADD_CORE(PARAM_UINT8 | PARAM_RONLY, bcFlow2, &isInit2)
+
 PARAM_GROUP_STOP(deck)

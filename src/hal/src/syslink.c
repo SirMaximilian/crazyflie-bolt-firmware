@@ -43,6 +43,7 @@
 #include "pm.h"
 #include "ow.h"
 #include "static_mem.h"
+#include "system.h"
 
 #ifdef UART2_LINK_COMM
 #include "uart2.h"
@@ -55,7 +56,7 @@ static void syslinkRouteIncommingPacket(SyslinkPacket *slp);
 
 static xSemaphoreHandle syslinkAccess;
 
-STATIC_MEM_TASK_ALLOC(syslinkTask, SYSLINK_TASK_STACKSIZE);
+STATIC_MEM_TASK_ALLOC_STACK_NO_DMA_CCM_SAFE(syslinkTask, SYSLINK_TASK_STACKSIZE);
 
 /* Syslink task, handles communication between nrf and stm and dispatch messages
  */
@@ -102,6 +103,9 @@ static void syslinkRouteIncommingPacket(SyslinkPacket *slp)
     case SYSLINK_OW_GROUP:
       owSyslinkRecieve(slp);
       break;
+    case SYSLINK_SYS_GROUP:
+      systemSyslinkReceive(slp);
+      break;
     default:
       DEBUG_PRINT("Unknown packet:%X.\n", slp->type);
       break;
@@ -134,6 +138,12 @@ bool syslinkTest()
 {
   return isInit;
 }
+
+bool isSyslinkUp()
+{
+  return isInit;
+}
+
 
 int syslinkSendPacket(SyslinkPacket *slp)
 {

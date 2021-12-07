@@ -82,11 +82,7 @@
 #define configUSE_16_BIT_TICKS		0
 #define configIDLE_SHOULD_YIELD		0
 #define configUSE_CO_ROUTINES 		0
-#ifdef DEBUG
-  #define configCHECK_FOR_STACK_OVERFLOW      1
-#else
-  #define configCHECK_FOR_STACK_OVERFLOW      0
-#endif
+#define configCHECK_FOR_STACK_OVERFLOW      1
 #define configUSE_TIMERS          1
 #define configTIMER_TASK_PRIORITY 1
 #define configTIMER_QUEUE_LENGTH  20
@@ -136,6 +132,10 @@ to exclude the API function. */
 // DEBUG SECTION
 #define configUSE_APPLICATION_TASK_TAG  1
 #define configQUEUE_REGISTRY_SIZE       10
+
+#ifdef DEBUG
+#define configRECORD_STACK_HIGH_ADDRESS 1
+#endif
 
 #define TASK_LED_ID_NBR         1
 #define TASK_RADIO_ID_NBR       2
