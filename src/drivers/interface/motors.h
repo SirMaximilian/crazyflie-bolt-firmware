@@ -62,7 +62,7 @@
 // Not applied for brushless motor setup.
 #define ENABLE_THRUST_BAT_COMPENSATED
 
-//#define ENABLE_ONESHOT125
+#define ENABLE_ONESHOT125
 
 #ifdef ENABLE_ONESHOT125
 /**

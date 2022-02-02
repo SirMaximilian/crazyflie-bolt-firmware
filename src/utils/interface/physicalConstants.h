@@ -44,6 +44,7 @@
   #define M_PI_2_F (1.57079632679f)
 #endif
 
+//#define CF_MASS (0.0949f)
 #ifndef CF_MASS
   #define CF_MASS (0.027f) // in kg
 #endif
