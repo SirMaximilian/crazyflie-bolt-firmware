@@ -5,6 +5,6 @@
         "**/bower_components": true
     },
     "files.associations": {
-        "ratio": "cpp"
+        "bootloader.h": "c"
     }
 }

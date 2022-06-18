@@ -44,19 +44,16 @@
 #include "motors.h"
 #include "sensors.h"
 #include "pm.h"
+#include "autoconf.h"
 
 #include "static_mem.h"
-
-#ifndef DEFAULT_PROP_TEST_PWM_RATIO
-#  define DEFAULT_PROP_TEST_PWM_RATIO 0
-#endif
 
 #define PROPTEST_NBR_OF_VARIANCE_VALUES   100
 
 static bool startPropTest = false;
 static bool startBatTest = false;
 
-static uint16_t propTestPWMRatio = DEFAULT_PROP_TEST_PWM_RATIO;
+static uint16_t propTestPWMRatio = CONFIG_MOTORS_DEFAULT_PROP_TEST_PWM_RATIO;
 
 static uint32_t i = 0;
 NO_DMA_CCM_SAFE_ZERO_INIT static float accX[PROPTEST_NBR_OF_VARIANCE_VALUES];
@@ -160,10 +157,7 @@ void healthRunTests(sensorData_t *sensors)
     minSingleLoadedVoltage[MOTOR_M3] = minLoadedVoltage;
     minSingleLoadedVoltage[MOTOR_M4] = minLoadedVoltage;
     // Make sure motors are stopped first.
-    motorsSetRatio(MOTOR_M1, 0);
-    motorsSetRatio(MOTOR_M2, 0);
-    motorsSetRatio(MOTOR_M3, 0);
-    motorsSetRatio(MOTOR_M4, 0);
+    motorsStop();
   }
   if (testState == measureNoiseFloor)
   {
@@ -254,10 +248,7 @@ void healthRunTests(sensorData_t *sensors)
     }
     else if (i == 50)
     {
-      motorsSetRatio(MOTOR_M1, 0);
-      motorsSetRatio(MOTOR_M2, 0);
-      motorsSetRatio(MOTOR_M3, 0);
-      motorsSetRatio(MOTOR_M4, 0);
+      motorsStop();
       testState = evaluateBatResult;
       i = 0;
     }

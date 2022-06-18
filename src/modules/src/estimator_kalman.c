@@ -186,6 +186,8 @@ STATIC_MEM_TASK_ALLOC_STACK_NO_DMA_CCM_SAFE(kalmanTask, 3 * configMINIMAL_STACK_
 
 // Called one time during system startup
 void estimatorKalmanTaskInit() {
+  kalmanCoreDefaultParams(&coreParams);
+
   vSemaphoreCreateBinary(runTaskSemaphore);
 
   dataMutex = xSemaphoreCreateMutexStatic(&dataMutexBuffer);
@@ -331,7 +333,7 @@ static bool predictStateForward(uint32_t osTick, float dt) {
   gyroAccumulatorCount = 0;
 
   quadIsFlying = supervisorIsFlying();
-  kalmanCorePredict(&coreData, &coreParams, &accAverage, &gyroAverage, dt, quadIsFlying);
+  kalmanCorePredict(&coreData, &accAverage, &gyroAverage, dt, quadIsFlying);
 
   return true;
 }
@@ -434,7 +436,6 @@ void estimatorKalmanInit(void)
   gyroAccumulatorCount = 0;
   outlierFilterReset(&sweepOutlierFilterState, 0);
 
-  kalmanCoreDefaultParams(&coreParams);
   kalmanCoreInit(&coreData, &coreParams);
 }
 
@@ -602,35 +603,35 @@ PARAM_GROUP_START(kalman)
 /**
  * @brief Process noise for x and y acceleration
  */
-  PARAM_ADD_CORE(PARAM_FLOAT, pNAcc_xy, &coreParams.procNoiseAcc_xy)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, pNAcc_xy, &coreParams.procNoiseAcc_xy)
 /**
  * @brief Process noise for z acceleration
  */
-  PARAM_ADD_CORE(PARAM_FLOAT, pNAcc_z, &coreParams.procNoiseAcc_z)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, pNAcc_z, &coreParams.procNoiseAcc_z)
   /**
  * @brief Process noise for velocity
  */
-  PARAM_ADD_CORE(PARAM_FLOAT, pNVel, &coreParams.procNoiseVel)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, pNVel, &coreParams.procNoiseVel)
   /**
  * @brief Process noise for position
  */
-  PARAM_ADD_CORE(PARAM_FLOAT, pNPos, &coreParams.procNoisePos)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, pNPos, &coreParams.procNoisePos)
   /**
  * @brief Process noise for attitude
  */
-  PARAM_ADD_CORE(PARAM_FLOAT, pNAtt, &coreParams.procNoiseAtt)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, pNAtt, &coreParams.procNoiseAtt)
   /**
  * @brief Measurement noise for barometer
  */
-  PARAM_ADD_CORE(PARAM_FLOAT, mNBaro, &coreParams.measNoiseBaro)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, mNBaro, &coreParams.measNoiseBaro)
   /**
  * @brief Measurement noise for roll/pitch gyros
  */
-  PARAM_ADD_CORE(PARAM_FLOAT, mNGyro_rollpitch, &coreParams.measNoiseGyro_rollpitch)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, mNGyro_rollpitch, &coreParams.measNoiseGyro_rollpitch)
   /**
  * @brief Measurement noise for yaw gyro
  */
-  PARAM_ADD_CORE(PARAM_FLOAT, mNGyro_yaw, &coreParams.measNoiseGyro_yaw)
+  PARAM_ADD_CORE(PARAM_FLOAT | PARAM_PERSISTENT, mNGyro_yaw, &coreParams.measNoiseGyro_yaw)
   /**
  * @brief Initial X after reset [m]
  */

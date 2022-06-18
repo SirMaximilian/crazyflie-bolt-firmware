@@ -67,7 +67,7 @@
 // #define DEBUG_STATE_CHECK
 
 // the reversion of pitch and roll to zero
-#ifdef LPS_2D_POSITION_HEIGHT
+#ifdef CONFIG_DECK_LOCO_2D_POSITION
 #define ROLLPITCH_ZERO_REVERSION (0.0f)
 #else
 #define ROLLPITCH_ZERO_REVERSION (0.001f)
@@ -327,7 +327,7 @@ void kalmanCoreUpdateWithBaro(kalmanCoreData_t *this, const kalmanCoreParams_t *
   kalmanCoreScalarUpdate(this, &H, meas - this->S[KC_STATE_Z], params->measNoiseBaro);
 }
 
-void kalmanCorePredict(kalmanCoreData_t* this, const kalmanCoreParams_t * params, Axis3f *acc, Axis3f *gyro, float dt, bool quadIsFlying)
+void kalmanCorePredict(kalmanCoreData_t* this, Axis3f *acc, Axis3f *gyro, float dt, bool quadIsFlying)
 {
   /* Here we discretize (euler forward) and linearise the quadrocopter dynamics in order
    * to push the covariance forward.
