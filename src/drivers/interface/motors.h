@@ -63,8 +63,6 @@
 // Not applied for brushless motor setup.
 #define ENABLE_THRUST_BAT_COMPENSATED
 
-#define CONFIG_MOTORS_ESC_PROTOCOL_ONESHOT125
-
 #ifdef CONFIG_MOTORS_ESC_PROTOCOL_ONESHOT125
 /**
  * *WARNING* Make sure the brushless driver is configured correctly as on the Crazyflie with normal
